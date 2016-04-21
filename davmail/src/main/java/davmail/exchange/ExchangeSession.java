@@ -112,6 +112,7 @@ public abstract class ExchangeSession {
         USER_NAME_FIELDS.add("userid");
         USER_NAME_FIELDS.add("SafeWordUser");
         USER_NAME_FIELDS.add("user_name");
+        USER_NAME_FIELDS.add("login");
     }
 
     protected static final Set<String> PASSWORD_FIELDS = new HashSet<String>();
@@ -121,6 +122,7 @@ public abstract class ExchangeSession {
         PASSWORD_FIELDS.add("txtUserPass");
         PASSWORD_FIELDS.add("pw");
         PASSWORD_FIELDS.add("basicPassword");
+        PASSWORD_FIELDS.add("passwd");
     }
 
     protected static final Set<String> TOKEN_FIELDS = new HashSet<String>();
@@ -206,6 +208,19 @@ public abstract class ExchangeSession {
      * Maximum number of times the user can try to input again the OTP pre-auth key before giving up.
      */
     private static final int MAX_OTP_RETRIES = 3;
+
+    /**
+     * Build an ExchangeSession from an already authenticated HttpClient.
+     *
+     * @param httpClient httpClient instance with session cookies
+     * @param userName User name
+     */
+    public ExchangeSession(HttpClient httpClient, User context) throws DavMailException {
+        this.httpClient = httpClient;
+        this.context = context;
+        this.userName = context.getUser();
+        buildSessionInfo(null);
+    }
 
     /**
      * Create an exchange session for the given URL.
@@ -1415,10 +1430,15 @@ public abstract class ExchangeSession {
      */
     public boolean refreshFolder(Folder currentFolder) throws IOException {
         Folder newFolder = getFolder(currentFolder.folderPath);
-        if (currentFolder.ctag == null || !currentFolder.ctag.equals(newFolder.ctag)) {
+        if (currentFolder.ctag == null || !currentFolder.ctag.equals(newFolder.ctag)
+                // ctag stamp is limited to second, check message count
+                || !(currentFolder.count == newFolder.count)
+                ) {
             if (LOGGER.isDebugEnabled()) {
-                LOGGER.debug("Contenttag changed on " + currentFolder.folderPath + ' '
-                        + currentFolder.ctag + " => " + newFolder.ctag + ", reloading messages");
+                LOGGER.debug("Contenttag or count changed on " + currentFolder.folderPath +
+                        " ctag: " + currentFolder.ctag + " => " + newFolder.ctag +
+                        " count: " + currentFolder.count + " => " + newFolder.count
+                        + ", reloading messages");
             }
             currentFolder.hasChildren = newFolder.hasChildren;
             currentFolder.noInferiors = newFolder.noInferiors;
@@ -1508,6 +1528,13 @@ public abstract class ExchangeSession {
      */
     public abstract void copyMessage(Message message, String targetFolder) throws IOException;
 
+    public void copyMessages(List<Message> messages, String targetFolder) throws IOException {
+        for (Message message: messages) {
+            copyMessage(message, targetFolder);
+        }
+    }
+
+
     /**
      * Move message to target folder
      *
@@ -1516,6 +1543,12 @@ public abstract class ExchangeSession {
      * @throws IOException on error
      */
     public abstract void moveMessage(Message message, String targetFolder) throws IOException;
+
+    public void moveMessages(List<Message> messages, String targetFolder) throws IOException {
+        for (Message message: messages) {
+            moveMessage(message, targetFolder);
+        }
+    }
 
     /**
      * Move folder to target name.
@@ -3336,7 +3369,7 @@ public abstract class ExchangeSession {
      * @param folderPath absolute folder path
      * @return true if folderPath is a public or shared folder
      */
-    public abstract boolean isMainCalendar(String folderPath);
+    public abstract boolean isMainCalendar(String folderPath) throws IOException;
 
     static final String MAILBOX_BASE = "/cn=";
 
@@ -3356,8 +3389,8 @@ public abstract class ExchangeSession {
                 while ((line = optionsPageReader.readLine()) != null
                         && (line.indexOf('[') == -1
                         || line.indexOf('@') == -1
-                        || line.indexOf(']') == -1)
-                        && !line.toLowerCase().contains(MAILBOX_BASE)) {
+                        || line.indexOf(']') == -1
+                        || !line.toLowerCase().contains(MAILBOX_BASE))) {
                 }
                 if (line != null) {
                     int start = line.toLowerCase().lastIndexOf(MAILBOX_BASE) + MAILBOX_BASE.length();

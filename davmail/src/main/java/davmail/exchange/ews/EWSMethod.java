@@ -25,7 +25,10 @@ import davmail.http.DavGatewayHttpClientFacade;
 import davmail.ui.tray.DavGatewayTray;
 import davmail.util.StringUtil;
 import org.apache.commons.codec.binary.Base64;
-import org.apache.commons.httpclient.*;
+import org.apache.commons.httpclient.Header;
+import org.apache.commons.httpclient.HttpConnection;
+import org.apache.commons.httpclient.HttpState;
+import org.apache.commons.httpclient.HttpStatus;
 import org.apache.commons.httpclient.methods.PostMethod;
 import org.apache.commons.httpclient.methods.RequestEntity;
 import org.apache.log4j.Level;
@@ -45,6 +48,7 @@ import java.util.zip.GZIPInputStream;
 @SuppressWarnings("Since15")
 public abstract class EWSMethod extends PostMethod {
     protected static final Logger LOGGER = Logger.getLogger(EWSMethod.class);
+    protected static final int CHUNK_LENGTH = 131072;
 
     protected FolderQueryTraversal traversal;
     protected BaseShape baseShape;
@@ -54,6 +58,7 @@ public abstract class EWSMethod extends PostMethod {
     protected FolderId toFolderId;
     protected FolderId parentFolderId;
     protected ItemId itemId;
+    protected List<ItemId> itemIds;
     protected ItemId parentItemId;
     protected Set<FieldURI> additionalProperties;
     protected Disposal deleteType;
@@ -113,6 +118,7 @@ public abstract class EWSMethod extends PostMethod {
                 !Level.DEBUG.toString().equals(Settings.getProperty("log4j.logger.httpclient.wire"))) {
             setRequestHeader("Accept-Encoding", "gzip");
         }
+
         setRequestEntity(new RequestEntity() {
             byte[] content;
 
@@ -121,10 +127,27 @@ public abstract class EWSMethod extends PostMethod {
             }
 
             public void writeRequest(OutputStream outputStream) throws IOException {
+                boolean firstPass = content == null;
                 if (content == null) {
                     content = generateSoapEnvelope();
                 }
-                outputStream.write(content);
+                if (content.length < CHUNK_LENGTH) {
+                    outputStream.write(content);
+                } else {
+                    int i = 0;
+                    while (i < content.length) {
+                        int length = CHUNK_LENGTH;
+                        if (i + CHUNK_LENGTH > content.length) {
+                            length = content.length - i;
+                        }
+                        outputStream.write(content, i, length);
+                        if (!firstPass) {
+                            DavGatewayTray.debug(new BundleMessage("LOG_UPLOAD_PROGRESS", String.valueOf((i + length) / 1024), (i + length) * 100 / content.length));
+                            DavGatewayTray.switchIcon();
+                        }
+                        i += CHUNK_LENGTH;
+                    }
+                }
             }
 
             public long getContentLength() {
@@ -193,11 +216,18 @@ public abstract class EWSMethod extends PostMethod {
     }
 
     protected void writeItemId(Writer writer) throws IOException {
-        if (itemId != null) {
+        if (itemId != null || itemIds != null) {
             if (updates == null) {
                 writer.write("<m:ItemIds>");
             }
-            itemId.write(writer);
+            if (itemId != null) {
+                itemId.write(writer);
+            }
+            if (itemIds != null) {
+                for (ItemId localItemId : itemIds) {
+                    localItemId.write(writer);
+                }
+            }
             if (updates == null) {
                 writer.write("</m:ItemIds>");
             }
@@ -384,7 +414,7 @@ public abstract class EWSMethod extends PostMethod {
     protected void writeSoapBody(Writer writer) throws IOException {
         startChanges(writer);
         writeShape(writer);
-        writeIndexedPageItemView(writer);
+        writeIndexedPageView(writer);
         writeRestriction(writer);
         writeSortOrder(writer);
         writeParentFolderId(writer);
@@ -402,9 +432,9 @@ public abstract class EWSMethod extends PostMethod {
     }
 
 
-    protected void writeIndexedPageItemView(Writer writer) throws IOException {
+    protected void writeIndexedPageView(Writer writer) throws IOException {
         if (maxCount > 0) {
-            writer.write("<m:IndexedPageItemView MaxEntriesReturned=\"");
+            writer.write("<m:IndexedPage" + itemType + "View MaxEntriesReturned=\"");
             writer.write(String.valueOf(maxCount));
             writer.write("\" Offset=\"");
             writer.write(String.valueOf(offset));
@@ -437,7 +467,7 @@ public abstract class EWSMethod extends PostMethod {
     }
 
     /**
-     * Get Exchange server version, Exchange2010 or Exchange2007_SP1
+     * Get Exchange server version, Exchange2013, Exchange2010 or Exchange2007_SP1
      *
      * @return server version
      */
@@ -483,9 +513,9 @@ public abstract class EWSMethod extends PostMethod {
          * attendee fullname
          */
         public String name;
-            }
+    }
 
-        /**
+    /**
      * Recurring event occurrence
      */
     public static class Occurrence {
@@ -712,14 +742,14 @@ public abstract class EWSMethod extends PostMethod {
                     && !"ErrorItemNotFound".equals(errorDetail)
                     ) {
                 try {
-                    throw new EWSException(errorDetail + ' ' +((errorDescription!=null)?errorDescription:"")+ "\n request: " + new String(generateSoapEnvelope(), "UTF-8"));
+                    throw new EWSException(errorDetail + ' ' + ((errorDescription != null) ? errorDescription : "") + "\n request: " + new String(generateSoapEnvelope(), "UTF-8"));
                 } catch (UnsupportedEncodingException e) {
                     throw new EWSException(e.getMessage());
                 }
             }
         }
-        if (getStatusCode() == HttpStatus.SC_BAD_REQUEST || getStatusCode() == HttpStatus.SC_INSUFFICIENT_STORAGE ) {
-             throw new EWSException(getStatusText());
+        if (getStatusCode() == HttpStatus.SC_BAD_REQUEST || getStatusCode() == HttpStatus.SC_INSUFFICIENT_STORAGE) {
+            throw new EWSException(getStatusText());
         }
     }
 
@@ -908,6 +938,7 @@ public abstract class EWSMethod extends PostMethod {
 
     /**
      * Convert response type to partstat value
+     *
      * @param responseType response type
      * @return partstat value
      */
@@ -1103,8 +1134,14 @@ public abstract class EWSMethod extends PostMethod {
                 handleErrors(reader);
                 if (serverVersion == null && XMLStreamUtil.isStartTag(reader, "ServerVersionInfo")) {
                     String majorVersion = getAttributeValue(reader, "MajorVersion");
-                    if ("14".equals(majorVersion)) {
-                        String minorVersion = getAttributeValue(reader, "MinorVersion");
+                    String minorVersion = getAttributeValue(reader, "MinorVersion");
+                    if ("15".equals(majorVersion)) {
+                        if ("0".equals(minorVersion)) {
+                            serverVersion = "Exchange2013";
+                        } else {
+                            serverVersion = "Exchange2013_SP1";
+                        }
+                    } else if ("14".equals(majorVersion)) {
                         if ("0".equals(minorVersion)) {
                             serverVersion = "Exchange2010";
                         } else {
@@ -1127,7 +1164,7 @@ public abstract class EWSMethod extends PostMethod {
                 try {
                     LOGGER.error("Current text: " + reader.getText());
                 } catch (IllegalStateException ise) {
-                    LOGGER.error(e+" "+e.getMessage());
+                    LOGGER.error(e + " " + e.getMessage());
                 }
             }
         }

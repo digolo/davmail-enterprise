@@ -106,6 +106,7 @@ public class SettingsFrame extends JFrame {
     protected JCheckBox enableKerberosCheckBox;
     protected JTextField folderSizeLimitField;
     protected JCheckBox smtpSaveInSentCheckBox;
+	protected JCheckBox imapAlwaysApproxMsgSizeCheckBox;
 
     JCheckBox osxHideFromDockCheckBox;
 
@@ -339,7 +340,11 @@ public class SettingsFrame extends JFrame {
         clientKeystorePanel.setLayout(new BoxLayout(clientKeystorePanel, BoxLayout.Y_AXIS));
         clientKeystorePanel.setBorder(BorderFactory.createTitledBorder(BundleMessage.format("UI_CLIENT_CERTIFICATE")));
 
-        clientKeystoreTypeCombo = new JComboBox(new String[]{"PKCS11", "JKS", "PKCS12"});
+        if (System.getProperty("os.name").toLowerCase().startsWith("windows")) {
+            clientKeystoreTypeCombo = new JComboBox(new String[]{"MSCAPI", "PKCS11", "JKS", "PKCS12"});
+        } else {
+            clientKeystoreTypeCombo = new JComboBox(new String[]{"PKCS11", "JKS", "PKCS12"});
+        }
         clientKeystoreTypeCombo.setSelectedItem(Settings.getProperty("davmail.ssl.clientKeystoreType"));
         clientKeystoreFileField = new JTextField(Settings.getProperty("davmail.ssl.clientKeystoreFile"), 17);
         clientKeystorePassField = new JPasswordField(Settings.getProperty("davmail.ssl.clientKeystorePass"), 15);
@@ -427,7 +432,7 @@ public class SettingsFrame extends JFrame {
     }
 
     protected JPanel getOtherSettingsPanel() {
-        JPanel otherSettingsPanel = new JPanel(new GridLayout(13, 2));
+        JPanel otherSettingsPanel = new JPanel(new GridLayout(14, 2));
         otherSettingsPanel.setBorder(BorderFactory.createTitledBorder(BundleMessage.format("UI_OTHER")));
 
         folderSizeLimitField = new JTextField(Settings.getProperty("davmail.folderSizeLimit"), 6);
@@ -445,6 +450,8 @@ public class SettingsFrame extends JFrame {
         disableGuiNotificationsCheckBox.setSelected(Settings.getBooleanProperty("davmail.disableGuiNotifications", false));
         imapAutoExpungeCheckBox = new JCheckBox();
         imapAutoExpungeCheckBox.setSelected(Settings.getBooleanProperty("davmail.imapAutoExpunge", true));
+		imapAlwaysApproxMsgSizeCheckBox = new JCheckBox();
+		imapAlwaysApproxMsgSizeCheckBox.setSelected(Settings.getBooleanProperty("davmail.imapAlwaysApproxMsgSize", false));
         enableKeepAliveCheckBox = new JCheckBox();
         enableKeepAliveCheckBox.setSelected(Settings.getBooleanProperty("davmail.enableKeepAlive", false));
         popMarkReadOnRetrCheckBox = new JCheckBox();
@@ -472,6 +479,8 @@ public class SettingsFrame extends JFrame {
                 BundleMessage.format("UI_DISABLE_GUI_NOTIFICATIONS_HELP"));
         addSettingComponent(otherSettingsPanel, BundleMessage.format("UI_IMAP_AUTO_EXPUNGE"), imapAutoExpungeCheckBox,
                 BundleMessage.format("UI_IMAP_AUTO_EXPUNGE_HELP"));
+        addSettingComponent(otherSettingsPanel, BundleMessage.format("UI_ALWAYS_APPROXIMATE_MSG_SIZE"), imapAlwaysApproxMsgSizeCheckBox,
+                BundleMessage.format("UI_ALWAYS_APPROXIMATE_MSG_SIZE_HELP"));
         addSettingComponent(otherSettingsPanel, BundleMessage.format("UI_ENABLE_KEEPALIVE"), enableKeepAliveCheckBox,
                 BundleMessage.format("UI_ENABLE_KEEPALIVE_HELP"));
         addSettingComponent(otherSettingsPanel, BundleMessage.format("UI_POP_MARK_READ"), popMarkReadOnRetrCheckBox,
@@ -609,6 +618,7 @@ public class SettingsFrame extends JFrame {
         showStartupBannerCheckBox.setSelected(Settings.getBooleanProperty("davmail.showStartupBanner", true));
         disableGuiNotificationsCheckBox.setSelected(Settings.getBooleanProperty("davmail.disableGuiNotifications", false));
         imapAutoExpungeCheckBox.setSelected(Settings.getBooleanProperty("davmail.imapAutoExpunge", true));
+        imapAlwaysApproxMsgSizeCheckBox.setSelected(Settings.getBooleanProperty("davmail.imapAlwaysApproxMsgSize", false));
         enableKeepAliveCheckBox.setSelected(Settings.getBooleanProperty("davmail.enableKeepAlive", false));
         popMarkReadOnRetrCheckBox.setSelected(Settings.getBooleanProperty("davmail.popMarkReadOnRetrCheckBox", false));
         setEwsModeSelectedItem(Settings.getProperty("davmail.enableEws", "auto"));
@@ -772,6 +782,7 @@ public class SettingsFrame extends JFrame {
                 Settings.setProperty("davmail.showStartupBanner", String.valueOf(showStartupBannerCheckBox.isSelected()));
                 Settings.setProperty("davmail.disableGuiNotifications", String.valueOf(disableGuiNotificationsCheckBox.isSelected()));
                 Settings.setProperty("davmail.imapAutoExpunge", String.valueOf(imapAutoExpungeCheckBox.isSelected()));
+                Settings.setProperty("davmail.imapAlwaysApproxMsgSize", String.valueOf(imapAlwaysApproxMsgSizeCheckBox.isSelected()));
                 Settings.setProperty("davmail.enableKeepAlive", String.valueOf(enableKeepAliveCheckBox.isSelected()));
                 Settings.setProperty("davmail.popMarkReadOnRetr", String.valueOf(popMarkReadOnRetrCheckBox.isSelected()));
                 String selectedEwsMode = (String) enableEwsComboBox.getSelectedItem();

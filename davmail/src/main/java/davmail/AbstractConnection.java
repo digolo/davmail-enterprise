@@ -218,7 +218,7 @@ public class AbstractConnection extends Thread {
     public String readClient() throws IOException {
         String line = in.readLine();
         if (line != null) {
-            if (line.toUpperCase().startsWith("PASS")) {
+            if (line.startsWith("PASS")) {
                 DavGatewayTray.debug(new BundleMessage("LOG_READ_CLIENT_PASS"));
                 // SMTP LOGIN
             } else if (line.startsWith("AUTH LOGIN ")) {
@@ -250,20 +250,20 @@ public class AbstractConnection extends Thread {
             try {
                 in.close();
             } catch (IOException e2) {
-                DavGatewayTray.warn(new BundleMessage("LOG_EXCEPTION_CLOSING_CLIENT_INPUT_STREAM"), e2);
+                DavGatewayTray.debug(new BundleMessage("LOG_EXCEPTION_CLOSING_CLIENT_INPUT_STREAM"), e2);
             }
         }
         if (os != null) {
             try {
                 os.close();
             } catch (IOException e2) {
-                DavGatewayTray.warn(new BundleMessage("LOG_EXCEPTION_CLOSING_CLIENT_OUTPUT_STREAM"), e2);
+                DavGatewayTray.debug(new BundleMessage("LOG_EXCEPTION_CLOSING_CLIENT_OUTPUT_STREAM"), e2);
             }
         }
         try {
             client.close();
         } catch (IOException e2) {
-            DavGatewayTray.warn(new BundleMessage("LOG_EXCEPTION_CLOSING_CLIENT_SOCKET"), e2);
+            DavGatewayTray.debug(new BundleMessage("LOG_EXCEPTION_CLOSING_CLIENT_SOCKET"), e2);
         }
     }
 }

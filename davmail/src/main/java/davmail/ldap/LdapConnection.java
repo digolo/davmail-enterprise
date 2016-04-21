@@ -68,7 +68,6 @@ import davmail.ui.tray.DavGatewayTray;
 /**
  * Handle a caldav connection.
  */
-@SuppressWarnings("restriction")
 public class LdapConnection extends AbstractConnection {
     private static final Logger LOGGER = Logger.getLogger(LdapConnection.class);
     /**
@@ -957,8 +956,7 @@ public class LdapConnection extends AbstractConnection {
         sendEntry(currentMessageId, BASE_CONTEXT, attributes);
     }
 
-    @SuppressWarnings("rawtypes")
-	protected void sendEntry(int currentMessageId, String dn, Map<String, Object> attributes) throws IOException {
+    protected void sendEntry(int currentMessageId, String dn, Map<String, Object> attributes) throws IOException {
         // synchronize on responseBer
         synchronized (responseBer) {
             responseBer.reset();
@@ -1577,7 +1575,6 @@ public class LdapConnection extends AbstractConnection {
                     searchThreadMap.remove(currentMessageId);
                 }
             }
-
         }
 
         /**

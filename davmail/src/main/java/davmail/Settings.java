@@ -127,7 +127,6 @@ public final class Settings {
      * Ports above 1024 for unix/linux
      */
     public static void setDefaultSettings() {
-        SETTINGS.put("davmail.url", "https://exchangeServer/exchange/");
         SETTINGS.put("davmail.popPort", "1110");
         SETTINGS.put("davmail.imapPort", "1143");
         SETTINGS.put("davmail.smtpPort", "1025");
@@ -159,6 +158,7 @@ public final class Settings {
         SETTINGS.put("davmail.showStartupBanner", Boolean.TRUE.toString());
         SETTINGS.put("davmail.disableGuiNotifications", Boolean.FALSE.toString());
         SETTINGS.put("davmail.imapAutoExpunge", Boolean.TRUE.toString());
+        SETTINGS.put("davmail.imapAlwaysApproxMsgSize", Boolean.FALSE.toString());
         SETTINGS.put("davmail.popMarkReadOnRetr", Boolean.FALSE.toString());
         SETTINGS.put("davmail.smtpSaveInSent", Boolean.TRUE.toString());
         SETTINGS.put("davmail.ssl.keystoreType", "");

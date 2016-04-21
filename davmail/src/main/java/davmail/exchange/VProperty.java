@@ -279,9 +279,11 @@ public class VProperty {
      * @param paramValue param value
      */
     public void addParam(String paramName, String paramValue) {
-        List<String> paramValues = new ArrayList<String>();
-        paramValues.add(paramValue);
-        addParam(paramName, paramValues);
+        if (paramValue != null) {
+            List<String> paramValues = new ArrayList<String>();
+            paramValues.add(paramValue);
+            addParam(paramName, paramValues);
+        }
     }
 
     protected void addParam(String paramName, List<String> paramValues) {
@@ -375,7 +377,6 @@ public class VProperty {
                 if (c == ',' &&
                         // multivalued properties
                         ("N".equals(key) ||
-                                "ADR".equals(key) ||
                                 "CATEGORIES".equals(key) ||
                                 "NICKNAME".equals(key)
                         )) {

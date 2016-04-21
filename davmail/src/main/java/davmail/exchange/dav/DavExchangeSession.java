@@ -682,9 +682,15 @@ public class DavExchangeSession extends ExchangeSession {
                 } else {
                     alias = getAliasFromLogin();
                 }
+                if (alias == null) {
+                    alias = "unknown";
+                }
                 buffer.append(alias);
                 if (alias.indexOf('@') < 0) {
                     buffer.append('@');
+                    if (hostName == null) {
+                        hostName = "mail.unknown.com";
+                    }
                     int dotIndex = hostName.indexOf('.');
                     if (dotIndex >= 0) {
                         buffer.append(hostName.substring(dotIndex + 1));

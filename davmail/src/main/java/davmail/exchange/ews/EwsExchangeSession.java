@@ -75,11 +75,11 @@ import davmail.util.StringUtil;
 
 /**
  * EWS Exchange adapter.
- * Compatible with Exchange 2007 and hopefully 2010.
+ * Compatible with Exchange 2007, 2010 and 2013.
  */
 public class EwsExchangeSession extends ExchangeSession {
 
-    protected static final int PAGE_SIZE = 100;
+    protected static final int PAGE_SIZE = 500;
 
     protected static final String ARCHIVE_ROOT = "/archive/";
 
@@ -99,9 +99,10 @@ public class EwsExchangeSession extends ExchangeSession {
         MESSAGE_TYPES.add("MeetingResponse");
         MESSAGE_TYPES.add("MeetingCancellation");
 
+        MESSAGE_TYPES.add("Item");
+        MESSAGE_TYPES.add("PostItem");
+
         // exclude types from IMAP
-        //MESSAGE_TYPES.add("Item");
-        //MESSAGE_TYPES.add("PostItem");
         //MESSAGE_TYPES.add("Contact");
         //MESSAGE_TYPES.add("DistributionList");
         //MESSAGE_TYPES.add("Task");
@@ -200,25 +201,22 @@ public class EwsExchangeSession extends ExchangeSession {
      * @throws IOException on error
      */
     protected void checkEndPointUrl(String endPointUrl) throws IOException {
-        HttpMethod checkMethod = new HeadMethod(endPointUrl);
-        checkMethod.setPath("/ews/services.wsdl");
-        checkMethod.setFollowRedirects(false);
+        GetFolderMethod checkMethod = new GetFolderMethod(BaseShape.ID_ONLY, DistinguishedFolderId.getInstance(null, DistinguishedFolderId.Name.root), null);
         try {
             int status = DavGatewayHttpClientFacade.executeNoRedirect(httpClient, checkMethod);
             if (status == HttpStatus.SC_UNAUTHORIZED) {
                 // retry with /ews/exchange.asmx
                 checkMethod.releaseConnection();
-                checkMethod = new HeadMethod(endPointUrl);
-                checkMethod.setFollowRedirects(true);
+                checkMethod = new GetFolderMethod(BaseShape.ID_ONLY, DistinguishedFolderId.getInstance(null, DistinguishedFolderId.Name.root), null);
                 status = DavGatewayHttpClientFacade.executeNoRedirect(httpClient, checkMethod);
                 if (status == HttpStatus.SC_UNAUTHORIZED) {
                     throw new DavMailAuthenticationException("EXCEPTION_AUTHENTICATION_FAILED");
                 } else if (status != HttpStatus.SC_OK) {
-                    throw new IOException("Ews endpoint not available at " + checkMethod.getURI().toString()+" status "+status);
+                    throw new IOException("Ews endpoint not available at " + checkMethod.getURI().toString() + " status " + status);
                 }
 
             } else if (status != HttpStatus.SC_OK) {
-                throw new IOException("Ews endpoint not available at " + checkMethod.getURI().toString()+" status "+status);
+                throw new IOException("Ews endpoint not available at " + checkMethod.getURI().toString() + " status " + status);
             }
         } finally {
             checkMethod.releaseConnection();
@@ -334,7 +332,7 @@ public class EwsExchangeSession extends ExchangeSession {
         String searchValue = userName;
         int index = searchValue.indexOf('\\');
         if (index >= 0) {
-            searchValue = searchValue.substring(index+1);
+            searchValue = searchValue.substring(index + 1);
         }
         ResolveNamesMethod resolveNamesMethod = new ResolveNamesMethod(searchValue);
         try {
@@ -753,17 +751,62 @@ public class EwsExchangeSession extends ExchangeSession {
     }
 
     protected List<EWSMethod.Item> searchItems(String folderPath, Set<String> attributes, Condition condition, FolderQueryTraversal folderQueryTraversal, int maxCount) throws IOException {
-        int resultCount = 0;
+        if (maxCount == 0) {
+            // unlimited search
+            return searchItems(folderPath, attributes, condition, folderQueryTraversal);
+        }
+        // limited search, do not use paged search, limit with maxCount, sort by imapUid descending to get latest items
+        int resultCount;
         List<EWSMethod.Item> results = new ArrayList<EWSMethod.Item>();
         FindItemMethod findItemMethod;
+
+        // search items in folder, do not retrieve all properties
+        findItemMethod = new FindItemMethod(folderQueryTraversal, BaseShape.ID_ONLY, getFolderId(folderPath), 0, maxCount);
+        for (String attribute : attributes) {
+            findItemMethod.addAdditionalProperty(Field.get(attribute));
+        }
+        // make sure imapUid is available
+        if (!attributes.contains("imapUid")) {
+            findItemMethod.addAdditionalProperty(Field.get("imapUid"));
+        }
+
+        // always sort items by imapUid descending to retrieve recent messages first
+        findItemMethod.setFieldOrder(new FieldOrder(Field.get("imapUid"), FieldOrder.Order.Descending));
+
+        if (condition != null && !condition.isEmpty()) {
+            findItemMethod.setSearchExpression((SearchExpression) condition);
+        }
+        executeMethod(findItemMethod);
+        results.addAll(findItemMethod.getResponseItems());
+        resultCount = results.size();
+        if (resultCount > 0 && LOGGER.isDebugEnabled()) {
+            LOGGER.debug("Folder " + folderPath + " - Search items count: " + resultCount + " maxCount: " + maxCount
+                    + " highest uid: " + results.get(0).get(Field.get("imapUid").getResponseName())
+                    + " lowest uid: " + results.get(resultCount - 1).get(Field.get("imapUid").getResponseName()));
+        }
+
+
+        return results;
+    }
+
+    /**
+     * Paged search, retrieve all items.
+     *
+     * @param folderPath           folder path
+     * @param attributes           attributes
+     * @param condition            search condition
+     * @param folderQueryTraversal search mode
+     * @return items
+     * @throws IOException on error
+     */
+    protected List<EWSMethod.Item> searchItems(String folderPath, Set<String> attributes, Condition condition, FolderQueryTraversal folderQueryTraversal) throws IOException {
+        int resultCount = 0;
+        List<EWSMethod.Item> results = new ArrayList<EWSMethod.Item>();
+        FolderId folderId = getFolderId(folderPath);
+        FindItemMethod findItemMethod;
         do {
-            int fetchCount = PAGE_SIZE;
-            // adjust fetch count on last page request
-            if (maxCount > 0) {
-                fetchCount = Math.min(PAGE_SIZE, maxCount - resultCount);
-            }
             // search items in folder, do not retrieve all properties
-            findItemMethod = new FindItemMethod(folderQueryTraversal, BaseShape.ID_ONLY, getFolderId(folderPath), 0, fetchCount);
+            findItemMethod = new FindItemMethod(folderQueryTraversal, BaseShape.ID_ONLY, folderId, resultCount, PAGE_SIZE);
             for (String attribute : attributes) {
                 findItemMethod.addAdditionalProperty(Field.get(attribute));
             }
@@ -772,36 +815,36 @@ public class EwsExchangeSession extends ExchangeSession {
                 findItemMethod.addAdditionalProperty(Field.get("imapUid"));
             }
 
-            // always sort items by imapUid descending to retrieve recent messages first
-            findItemMethod.setFieldOrder(new FieldOrder(Field.get("imapUid"), FieldOrder.Order.Descending));
+            // always sort items by imapUid ascending to retrieve pages in creation order
+            findItemMethod.setFieldOrder(new FieldOrder(Field.get("imapUid"), FieldOrder.Order.Ascending));
 
-            // use requested filter for first page
-            Condition localCondition = condition;
-            if (resultCount > 0) {
-                // adjust condition for next pages: retrieve only items with imapUid lower than current lowest
-                String lowestImapUid = results.get(results.size()-1).get(Field.get("imapUid").getResponseName());
-                if (localCondition == null || localCondition.isEmpty()) {
-                    localCondition = lt("imapUid", lowestImapUid);
-                } else {
-                    localCondition = and(lt("imapUid", lowestImapUid), condition);
-                }
-            }
-            if (localCondition != null && !localCondition.isEmpty()) {
-                findItemMethod.setSearchExpression((SearchExpression) localCondition);
+            if (condition != null && !condition.isEmpty()) {
+                findItemMethod.setSearchExpression((SearchExpression) condition);
             }
             executeMethod(findItemMethod);
-            results.addAll(findItemMethod.getResponseItems());
+
+            long highestUid = 0;
+            if (resultCount > 0) {
+                highestUid = Long.parseLong(results.get(resultCount - 1).get(Field.get("imapUid").getResponseName()));
+            }
+            // Only add new result if not already available (concurrent folder changes issue)
+            for (EWSMethod.Item item : findItemMethod.getResponseItems()) {
+                long imapUid = Long.parseLong(item.get(Field.get("imapUid").getResponseName()));
+                if (imapUid > highestUid) {
+                    results.add(item);
+                }
+            }
             resultCount = results.size();
             if (resultCount > 0 && LOGGER.isDebugEnabled()) {
-                LOGGER.debug("Search items current count: "+resultCount+" fetchCount: "+fetchCount
-                        +" highest uid: "+results.get(0).get(Field.get("imapUid").getResponseName())
-                        +" lowest uid: "+results.get(resultCount-1).get(Field.get("imapUid").getResponseName()));
+                LOGGER.debug("Folder " + folderPath + " - Search items current count: " + resultCount + " fetchCount: " + PAGE_SIZE
+                        + " highest uid: " + results.get(resultCount - 1).get(Field.get("imapUid").getResponseName())
+                        + " lowest uid: " + results.get(0).get(Field.get("imapUid").getResponseName()));
             }
             if (Thread.interrupted()) {
-                LOGGER.debug("Search items failed: Interrupted by client");
+                LOGGER.debug("Folder " + folderPath + " - Search items failed: Interrupted by client");
                 throw new IOException("Search items failed: Interrupted by client");
             }
-        } while (!(findItemMethod.includesLastItemInRange || (maxCount > 0 && resultCount == maxCount)));
+        } while (!(findItemMethod.includesLastItemInRange));
         return results;
     }
 
@@ -998,11 +1041,11 @@ public class EwsExchangeSession extends ExchangeSession {
 
     @Override
     public Condition headerIsEqualTo(String headerName, String value) {
-        if (serverVersion.startsWith("Exchange2010")) {
+        if (serverVersion.startsWith("Exchange201")) {
             if ("from".equals(headerName)
                     || "to".equals(headerName)
                     || "cc".equals(headerName)) {
-                return new AttributeCondition("msg"+headerName, Operator.Contains, value, ContainmentMode.Substring, ContainmentComparison.IgnoreCase);
+                return new AttributeCondition("msg" + headerName, Operator.Contains, value, ContainmentMode.Substring, ContainmentComparison.IgnoreCase);
             } else if ("message-id".equals(headerName)
                     || "bcc".equals(headerName)) {
                 return new AttributeCondition(headerName, Operator.Contains, value, ContainmentMode.Substring, ContainmentComparison.IgnoreCase);
@@ -1112,27 +1155,32 @@ public class EwsExchangeSession extends ExchangeSession {
     protected void appendSubFolders(List<ExchangeSession.Folder> folders,
                                     String parentFolderPath, FolderId parentFolderId,
                                     Condition condition, boolean recursive) throws IOException {
-        FindFolderMethod findFolderMethod = new FindFolderMethod(FolderQueryTraversal.SHALLOW,
-                BaseShape.ID_ONLY, parentFolderId, FOLDER_PROPERTIES, (SearchExpression) condition);
-        executeMethod(findFolderMethod);
-        for (EWSMethod.Item item : findFolderMethod.getResponseItems()) {
-            Folder folder = buildFolder(item);
-            if (parentFolderPath.length() > 0) {
-                if (parentFolderPath.endsWith("/")) {
-                    folder.folderPath = parentFolderPath + item.get(Field.get("folderDisplayName").getResponseName());
+        int resultCount = 0;
+        FindFolderMethod findFolderMethod;
+        do {
+            findFolderMethod = new FindFolderMethod(FolderQueryTraversal.SHALLOW,
+                    BaseShape.ID_ONLY, parentFolderId, FOLDER_PROPERTIES, (SearchExpression) condition, resultCount, PAGE_SIZE);
+            executeMethod(findFolderMethod);
+            for (EWSMethod.Item item : findFolderMethod.getResponseItems()) {
+                resultCount++;
+                Folder folder = buildFolder(item);
+                if (parentFolderPath.length() > 0) {
+                    if (parentFolderPath.endsWith("/")) {
+                        folder.folderPath = parentFolderPath + item.get(Field.get("folderDisplayName").getResponseName());
+                    } else {
+                        folder.folderPath = parentFolderPath + '/' + item.get(Field.get("folderDisplayName").getResponseName());
+                    }
+                } else if (folderIdMap.get(folder.folderId.value) != null) {
+                    folder.folderPath = folderIdMap.get(folder.folderId.value);
                 } else {
-                    folder.folderPath = parentFolderPath + '/' + item.get(Field.get("folderDisplayName").getResponseName());
+                    folder.folderPath = item.get(Field.get("folderDisplayName").getResponseName());
                 }
-            } else if (folderIdMap.get(folder.folderId.value) != null) {
-                folder.folderPath = folderIdMap.get(folder.folderId.value);
-            } else {
-                folder.folderPath = item.get(Field.get("folderDisplayName").getResponseName());
+                folders.add(folder);
+                if (recursive && folder.hasChildren) {
+                    appendSubFolders(folders, folder.folderPath, folder.folderId, condition, true);
+                }
             }
-            folders.add(folder);
-            if (recursive && folder.hasChildren) {
-                appendSubFolders(folders, folder.folderPath, folder.folderId, condition, recursive);
-            }
-        }
+        } while (!(findFolderMethod.includesLastItemInRange));
     }
 
     /**
@@ -1216,8 +1264,36 @@ public class EwsExchangeSession extends ExchangeSession {
      * @inheritDoc
      */
     @Override
+    public void moveMessages(List<ExchangeSession.Message> messages, String targetFolder) throws IOException {
+        ArrayList<ItemId> itemIds = new ArrayList<ItemId>();
+        for (ExchangeSession.Message message: messages) {
+            itemIds.add(((EwsExchangeSession.Message) message).itemId);
+        }
+
+        MoveItemMethod moveItemMethod = new MoveItemMethod(itemIds, getFolderId(targetFolder));
+        executeMethod(moveItemMethod);
+    }
+
+    /**
+     * @inheritDoc
+     */
+    @Override
     public void copyMessage(ExchangeSession.Message message, String targetFolder) throws IOException {
         CopyItemMethod copyItemMethod = new CopyItemMethod(((EwsExchangeSession.Message) message).itemId, getFolderId(targetFolder));
+        executeMethod(copyItemMethod);
+    }
+
+    /**
+     * @inheritDoc
+     */
+    @Override
+    public void copyMessages(List<ExchangeSession.Message> messages, String targetFolder) throws IOException {
+        ArrayList<ItemId> itemIds = new ArrayList<ItemId>();
+        for (ExchangeSession.Message message: messages) {
+            itemIds.add(((EwsExchangeSession.Message) message).itemId);
+        }
+
+        CopyItemMethod copyItemMethod = new CopyItemMethod(itemIds, getFolderId(targetFolder));
         executeMethod(copyItemMethod);
     }
 
@@ -1447,7 +1523,8 @@ public class EwsExchangeSession extends ExchangeSession {
         String type;
         boolean isException;
 
-        protected Event(EWSMethod.Item response) {
+        protected Event(String folderPath, EWSMethod.Item response) {
+            this.folderPath = folderPath;
             itemId = new ItemId(response);
 
             type = response.type;
@@ -1615,9 +1692,8 @@ public class EwsExchangeSession extends ExchangeSession {
                                     if ("ACCEPTED".equals(ownerPartStat)) {
                                         ownerResponseReply = "AcceptItem";
                                         // do not send DeclineItem to avoid deleting target event
-                                        //} else if  ("DECLINED".equals(ownerPartStat)) {
-                                        //    ownerResponseReply = "DeclineItem";
-                                    } else if ("TENTATIVE".equals(ownerPartStat)) {
+                                    } else if ("DECLINED".equals(ownerPartStat) ||
+                                            "TENTATIVE".equals(ownerPartStat)) {
                                         ownerResponseReply = "TentativelyAcceptItem";
                                     }
                                 }
@@ -1660,12 +1736,12 @@ public class EwsExchangeSession extends ExchangeSession {
 
                 newItem.setFieldUpdates(updates);
                 createOrUpdateItemMethod = new CreateItemMethod(MessageDisposition.SaveOnly, SendMeetingInvitations.SendToNone, getFolderId(folderPath), newItem);
-                // force context Timezone on Exchange 2010
-                if (serverVersion != null && serverVersion.startsWith("Exchange2010")) {
+                // force context Timezone on Exchange 2010 and 2013
+                if (serverVersion != null && serverVersion.startsWith("Exchange201")) {
                     createOrUpdateItemMethod.setTimezoneContext(EwsExchangeSession.this.getVTimezone().getPropertyValue("TZID"));
                 }
                 //}
-            }
+			}
             executeMethod(createOrUpdateItemMethod);
 
             itemResult.status = createOrUpdateItemMethod.getStatusCode();
@@ -1731,8 +1807,11 @@ public class EwsExchangeSession extends ExchangeSession {
                     getItemMethod.addAdditionalProperty(Field.get("datecompleted"));
                     getItemMethod.addAdditionalProperty(Field.get("keywords"));
 
-                } else if (!"Message".equals(type)) {
+                } else if (!"Message".equals(type)
+                        && !"MeetingCancellation".equals(type)
+                        && !"MeetingResponse".equals(type)) {
                     getItemMethod = new GetItemMethod(BaseShape.ID_ONLY, itemId, true);
+                    getItemMethod.addAdditionalProperty(Field.get("lastmodified"));
                     getItemMethod.addAdditionalProperty(Field.get("reminderset"));
                     getItemMethod.addAdditionalProperty(Field.get("calendaruid"));
                     getItemMethod.addAdditionalProperty(Field.get("myresponsetype"));
@@ -1808,24 +1887,28 @@ public class EwsExchangeSession extends ExchangeSession {
                                 getOccurrenceMethod.addAdditionalProperty(Field.get("requiredattendees"));
                                 getOccurrenceMethod.addAdditionalProperty(Field.get("optionalattendees"));
                                 getOccurrenceMethod.addAdditionalProperty(Field.get("modifiedoccurrences"));
+                                getOccurrenceMethod.addAdditionalProperty(Field.get("lastmodified"));
                                 executeMethod(getOccurrenceMethod);
                                 fixAttendees(getOccurrenceMethod, modifiedOccurrence);
+                                // LAST-MODIFIED is missing in event content
+                                modifiedOccurrence.setPropertyValue("LAST-MODIFIED", convertDateFromExchange(getOccurrenceMethod.getResponseItem().get(Field.get("lastmodified").getResponseName())));
 
-                                if ("Exchange2007_SP1".equals(serverVersion)) {
-                                    // fix uid, should be the same as main VEVENT
-                                    if (calendaruid != null) {
-                                        modifiedOccurrence.setPropertyValue("UID", calendaruid);
-                                    }
+                                // fix uid, should be the same as main VEVENT
+                                if (calendaruid != null) {
+                                    modifiedOccurrence.setPropertyValue("UID", calendaruid);
+                                }
 
-                                    VProperty recurrenceId = modifiedOccurrence.getProperty("RECURRENCE-ID");
-                                    if (recurrenceId != null) {
-                                        recurrenceId.removeParam("TZID");
-                                        recurrenceId.getValues().set(0, convertDateFromExchange(occurrence.originalStart));
-                                    }
+                                VProperty recurrenceId = modifiedOccurrence.getProperty("RECURRENCE-ID");
+                                if (recurrenceId != null) {
+                                    recurrenceId.removeParam("TZID");
+                                    recurrenceId.getValues().set(0, convertDateFromExchange(occurrence.originalStart));
                                 }
                             }
                         }
                     }
+                    // LAST-MODIFIED is missing in event content
+                    localVCalendar.setFirstVeventPropertyValue("LAST-MODIFIED", convertDateFromExchange(getItemMethod.getResponseItem().get(Field.get("lastmodified").getResponseName())));
+
                     // restore mozilla invitations option
                     localVCalendar.setFirstVeventPropertyValue("X-MOZ-SEND-INVITATIONS",
                             getItemMethod.getResponseItem().get(Field.get("xmozsendinvitations").getResponseName()));
@@ -1847,20 +1930,22 @@ public class EwsExchangeSession extends ExchangeSession {
         }
 
         protected void fixAttendees(GetItemMethod getItemMethod, VObject vEvent) throws EWSException {
-            List<EWSMethod.Attendee> attendees = getItemMethod.getResponseItem().getAttendees();
-            if (attendees != null) {
-                for (EWSMethod.Attendee attendee : attendees) {
-                    VProperty attendeeProperty = new VProperty("ATTENDEE", "mailto:" + attendee.email);
-                    attendeeProperty.addParam("CN", attendee.name);
-                    String myResponseType = getItemMethod.getResponseItem().get(Field.get("myresponsetype").getResponseName());
-                    if ("Exchange2007_SP1".equals(serverVersion) && email.equalsIgnoreCase(attendee.email) && myResponseType != null) {
-                        attendeeProperty.addParam("PARTSTAT", EWSMethod.responseTypeToPartstat(myResponseType));
-                    } else {
-                        attendeeProperty.addParam("PARTSTAT", attendee.partstat);
+            if (getItemMethod.getResponseItem() != null) {
+                List<EWSMethod.Attendee> attendees = getItemMethod.getResponseItem().getAttendees();
+                if (attendees != null) {
+                    for (EWSMethod.Attendee attendee : attendees) {
+                        VProperty attendeeProperty = new VProperty("ATTENDEE", "mailto:" + attendee.email);
+                        attendeeProperty.addParam("CN", attendee.name);
+                        String myResponseType = getItemMethod.getResponseItem().get(Field.get("myresponsetype").getResponseName());
+                        if (email.equalsIgnoreCase(attendee.email) && myResponseType != null) {
+                            attendeeProperty.addParam("PARTSTAT", EWSMethod.responseTypeToPartstat(myResponseType));
+                        } else {
+                            attendeeProperty.addParam("PARTSTAT", attendee.partstat);
+                        }
+                        //attendeeProperty.addParam("RSVP", "TRUE");
+                        attendeeProperty.addParam("ROLE", attendee.role);
+                        vEvent.addProperty(attendeeProperty);
                     }
-                    //attendeeProperty.addParam("RSVP", "TRUE");
-                    attendeeProperty.addParam("ROLE", attendee.role);
-                    vEvent.addProperty(attendeeProperty);
                 }
             }
         }
@@ -1905,7 +1990,7 @@ public class EwsExchangeSession extends ExchangeSession {
                 condition,
                 FolderQueryTraversal.SHALLOW, 0);
         for (EWSMethod.Item response : responses) {
-            Event event = new Event(response);
+            Event event = new Event(folderPath, response);
             if ("Message".equals(event.type)) {
                 // TODO: just exclude
                 // need to check body
@@ -2014,7 +2099,7 @@ public class EwsExchangeSession extends ExchangeSession {
                 || "Task".equals(itemType)
                 // VTODOs appear as Messages
                 || "Message".equals(itemType)) {
-            return new Event(item);
+            return new Event(folderPath, item);
         } else {
             throw new HttpNotFoundException(itemName + " not found in " + folderPath);
         }
@@ -2108,8 +2193,10 @@ public class EwsExchangeSession extends ExchangeSession {
     }
 
     @Override
-    public boolean isMainCalendar(String folderPath) {
-        return "calendar".equalsIgnoreCase(folderPath) || (currentMailboxPath + "/calendar").equalsIgnoreCase(folderPath);
+    public boolean isMainCalendar(String folderPath) throws IOException {
+        FolderId currentFolderId = getFolderId(folderPath);
+        FolderId calendarFolderId = getFolderId("calendar");
+        return calendarFolderId.name.equals(currentFolderId.name) && calendarFolderId.value.equals(currentFolderId.value);
     }
 
     @Override
@@ -2307,7 +2394,8 @@ public class EwsExchangeSession extends ExchangeSession {
                 parentFolderId,
                 FOLDER_PROPERTIES,
                 new TwoOperandExpression(TwoOperandExpression.Operator.IsEqualTo,
-                        Field.get("folderDisplayName"), folderName)
+                        Field.get("folderDisplayName"), folderName),
+                0, 1
         );
         executeMethod(findFolderMethod);
         EWSMethod.Item item = findFolderMethod.getResponseItem();
@@ -2569,7 +2657,13 @@ public class EwsExchangeSession extends ExchangeSession {
 
     static {
         priorityToImportanceMap.put("1", "High");
+        priorityToImportanceMap.put("2", "High");
+        priorityToImportanceMap.put("3", "High");
+        priorityToImportanceMap.put("4", "Normal");
         priorityToImportanceMap.put("5", "Normal");
+        priorityToImportanceMap.put("6", "Normal");
+        priorityToImportanceMap.put("7", "Low");
+        priorityToImportanceMap.put("8", "Low");
         priorityToImportanceMap.put("9", "Low");
     }
 

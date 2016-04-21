@@ -20,7 +20,9 @@ package davmail.exchange;
 
 import it.fuffaware.davmail.User;
 
+import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.UnsupportedEncodingException;
 import java.net.NetworkInterface;
 import java.net.SocketException;
 import java.net.URLEncoder;
@@ -82,29 +84,55 @@ public final class ExchangeSessionFactory {
     private ExchangeSessionFactory() {
     }
 
+    private static String normalizeUserResource(String path, String userName) throws UnsupportedEncodingException {
+    	if (path != null) {
+	    	if (path.endsWith("/")) {
+	    		return path + URLEncoder.encode(userName.toLowerCase(), "UTF-8")+".json";
+	    	} else if (path != null) {
+	    		return path + "/" + URLEncoder.encode(userName.toLowerCase(), "UTF-8")+".json";
+	    	}
+    	}
+		return null;
+    }
+    
     private static User getUserContext(String userName) throws DavMailException {
     	ExchangeSession.LOGGER.debug("Getting URL for userName: " + userName);
     	
     	User user = null;
     	try {
-	    	HttpClient client = new HttpClient();
-	    	GetMethod get = new GetMethod(Settings.getProperty("davmail.user.context.url")+'/'+URLEncoder.encode(userName, "UTF-8")+".json");
-	    	get.setFollowRedirects(true);
-	    	int httpCode = client.executeMethod(get);
-
-	    	if (httpCode == 200) {
-	    		user = mapper.readValue(get.getResponseBodyAsStream(), User.class);
+	    	String uri = Settings.getProperty("davmail.user.context.url");
+	    	if (uri != null) {
+	    		uri = normalizeUserResource(uri, userName);
+	    		if (uri.startsWith("file://")) {
+	    			// Open file
+	    			user = mapper.readValue(new FileInputStream(uri.substring("file://".length())), User.class);
+	    		} else {
+	    			// try with HttpClient
+	    			HttpClient client = new HttpClient();
+			    	GetMethod get = new GetMethod(uri);
+			    	get.setFollowRedirects(true);
+			    	int httpCode = client.executeMethod(get);
+		
+			    	if (httpCode == 200) {
+			    		user = mapper.readValue(get.getResponseBodyAsStream(), User.class);
+			    	}
+			    }
+	    		
 	    		if (user != null) {
 	    			if (!user.isConfirmed()) {
 		    			ExchangeSession.LOGGER.debug("Account not yet confirmed");
 		    			throw new DavMailException("EXCEPTION_CONFIRMATION_EXCEPTION");
 	    			}
 	    		}
+	    	} else {
+	    		ExchangeSession.LOGGER.warn("Exception while trying to get URL: davmail.user.context.url is NULL");
+	        	BundleMessage message = new BundleMessage("EXCEPTION_REST_EXCEPTION", userName);
+	        	throw new DavMailException("EXCEPTION_DAVMAIL_CONFIGURATION", message);
 	    	}
     	} catch (Throwable exc) {
     		ExchangeSession.LOGGER.warn("Exception while trying to get URL", exc);
-        	BundleMessage message = new BundleMessage("EXCEPTION_REST_EXCEPTION", exc.getClass().getName(), exc.getMessage());
-        	throw new DavMailException("EXCEPTION_DAVMAIL_CONFIGURATION", message);
+        	BundleMessage message = new BundleMessage("EXCEPTION_REST_EXCEPTION", userName, exc.getClass().getName(), exc.getMessage());
+        	throw new DavMailAuthenticationException("EXCEPTION_DAVMAIL_CONFIGURATION", message);
 		}
     	
     	if (user == null) {

@@ -18,16 +18,6 @@
  */
 package davmail;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.util.ArrayList;
-
-import org.apache.commons.httpclient.HttpClient;
-import org.apache.commons.httpclient.HttpStatus;
-import org.apache.commons.httpclient.methods.GetMethod;
-import org.apache.log4j.Logger;
-
 import davmail.caldav.CaldavServer;
 import davmail.exception.DavMailException;
 import davmail.exchange.ExchangeSessionFactory;
@@ -38,6 +28,15 @@ import davmail.ldap.LdapServer;
 import davmail.pop.PopServer;
 import davmail.smtp.SmtpServer;
 import davmail.ui.tray.DavGatewayTray;
+import org.apache.commons.httpclient.HttpClient;
+import org.apache.commons.httpclient.HttpStatus;
+import org.apache.commons.httpclient.methods.GetMethod;
+import org.apache.log4j.Logger;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.util.ArrayList;
 
 /**
  * DavGateway main class
@@ -59,13 +58,19 @@ public final class DavGateway {
      * @param args command line parameter config file path
      */
     public static void main(String[] args) {
-
-        if (args.length >= 1) {
-            Settings.setConfigFilePath(args[0]);
+        boolean notray = false;
+        for (String arg:args) {
+            if (arg.startsWith("-")) {
+                if ("-notray".equals(arg)) {
+                    notray = true;
+                }
+            } else {
+                Settings.setConfigFilePath(arg);
+            }
         }
 
         Settings.load();
-        DavGatewayTray.init();
+        DavGatewayTray.init(notray);
 
         start();
 
@@ -97,6 +102,9 @@ public final class DavGateway {
      * Start DavMail listeners.
      */
     public static void start() {
+        // register custom SSL Socket factory
+        DavGatewaySSLProtocolSocketFactory.register();
+
         // prepare HTTP connection pool
         DavGatewayHttpClientFacade.start();
 
