@@ -3453,6 +3453,7 @@ public abstract class ExchangeSession {
 
     static {
         CONTACT_ATTRIBUTES.add("imapUid");
+        CONTACT_ATTRIBUTES.add("alias");
         CONTACT_ATTRIBUTES.add("etag");
         CONTACT_ATTRIBUTES.add("urlcompname");
 

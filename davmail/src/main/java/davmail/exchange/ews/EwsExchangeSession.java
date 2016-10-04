@@ -2422,6 +2422,7 @@ public class EwsExchangeSession extends ExchangeSession {
 
     static {
         GALFIND_ATTRIBUTE_MAP.put("imapUid", "Name");
+        GALFIND_ATTRIBUTE_MAP.put("alias", "Alias");
         GALFIND_ATTRIBUTE_MAP.put("cn", "DisplayName");
         GALFIND_ATTRIBUTE_MAP.put("givenName", "GivenName");
         GALFIND_ATTRIBUTE_MAP.put("sn", "Surname");
@@ -2460,6 +2461,7 @@ public class EwsExchangeSession extends ExchangeSession {
         contact.setName(response.get("Name"));
         contact.put("imapUid", response.get("Name"));
         contact.put("uid", response.get("Name"));
+        contact.put("alias", response.get("Surname") + response.get("GivenName").substring(0,1));
         if (LOGGER.isDebugEnabled()) {
             for (Map.Entry<String, String> entry : response.entrySet()) {
                 String key = entry.getKey();
