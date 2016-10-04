@@ -308,6 +308,18 @@
             <version>3.0.1</version>
         </dependency>   
 
+		<dependency>
+		    <groupId>org.eclipse</groupId>
+		    <artifactId>swt</artifactId>
+		    <version>3.7</version>
+		</dependency>
+
+		<dependency>
+		    <groupId>info.growl</groupId>
+		    <artifactId>growl</artifactId>
+		    <version>0.2</version>
+		</dependency>
+
     </dependencies>
     <pluginRepositories>
         <pluginRepository>

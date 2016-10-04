@@ -202,24 +202,11 @@ public class EwsExchangeSession extends ExchangeSession {
      */
     protected void checkEndPointUrl(String endPointUrl) throws IOException {
         GetFolderMethod checkMethod = new GetFolderMethod(BaseShape.ID_ONLY, DistinguishedFolderId.getInstance(null, DistinguishedFolderId.Name.root), null);
-        try {
-            int status = DavGatewayHttpClientFacade.executeNoRedirect(httpClient, checkMethod);
-            if (status == HttpStatus.SC_UNAUTHORIZED) {
-                // retry with /ews/exchange.asmx
-                checkMethod.releaseConnection();
-                checkMethod = new GetFolderMethod(BaseShape.ID_ONLY, DistinguishedFolderId.getInstance(null, DistinguishedFolderId.Name.root), null);
-                status = DavGatewayHttpClientFacade.executeNoRedirect(httpClient, checkMethod);
-                if (status == HttpStatus.SC_UNAUTHORIZED) {
-                    throw new DavMailAuthenticationException("EXCEPTION_AUTHENTICATION_FAILED");
-                } else if (status != HttpStatus.SC_OK) {
-                    throw new IOException("Ews endpoint not available at " + checkMethod.getURI().toString() + " status " + status);
-                }
-
-            } else if (status != HttpStatus.SC_OK) {
-                throw new IOException("Ews endpoint not available at " + checkMethod.getURI().toString() + " status " + status);
-            }
-        } finally {
-            checkMethod.releaseConnection();
+        int status = executeMethod(checkMethod);
+        if (status == HttpStatus.SC_UNAUTHORIZED) {
+            throw new DavMailAuthenticationException("EXCEPTION_AUTHENTICATION_FAILED");
+        } else if (status != HttpStatus.SC_OK) {
+            throw new IOException("Ews endpoint not available at " + checkMethod.getURI().toString() + " status " + status);
         }
     }
 
@@ -229,7 +216,9 @@ public class EwsExchangeSession extends ExchangeSession {
         if (method != null) {
             method.releaseConnection();
         }
-        directEws = method == null || "/ews/services.wsdl".equalsIgnoreCase(method.getPath());
+        directEws = method == null
+                || "/ews/services.wsdl".equalsIgnoreCase(method.getPath())
+                || "/ews/exchange.asmx".equalsIgnoreCase(method.getPath());
 
         // options page is not available in direct EWS mode
         if (!directEws) {
@@ -355,7 +344,7 @@ public class EwsExchangeSession extends ExchangeSession {
             setAutoDiscoverRequestEntity(userEmail);
         }
 
-        AutoDiscoverMethod(String userEmail)  throws IOException {
+        AutoDiscoverMethod(String userEmail) throws IOException {
             super("/autodiscover/autodiscover.xml");
             setAutoDiscoverRequestEntity(userEmail);
         }
@@ -1394,7 +1383,7 @@ public class EwsExchangeSession extends ExchangeSession {
             // handle email addresses
             IndexedFieldUpdate emailFieldUpdate = null;
             for (Map.Entry<String, String> entry : entrySet()) {
-                if (entry.getKey().startsWith("smtpemail") && entry.getValue() != null) {
+                if (entry.getKey().startsWith("smtpemail")) {
                     if (emailFieldUpdate == null) {
                         emailFieldUpdate = new IndexedFieldUpdate("EmailAddresses");
                     }
@@ -2405,7 +2394,46 @@ public class EwsExchangeSession extends ExchangeSession {
         return folderId;
     }
 
-    protected void executeMethod(EWSMethod ewsMethod) throws IOException {
+    long throttlingTimestamp = 0;
+
+    protected int executeMethod(EWSMethod ewsMethod) throws IOException {
+        long throttlingDelay = throttlingTimestamp - System.currentTimeMillis();
+        try {
+            if (throttlingDelay > 0) {
+                LOGGER.warn("Throttling active on server, waiting " + (throttlingDelay / 1000) + " seconds");
+                try {
+                    Thread.sleep(throttlingDelay);
+                } catch (InterruptedException e1) {
+                    LOGGER.error("Throttling delay interrupted " + e1.getMessage());
+                }
+            }
+            internalExecuteMethod(ewsMethod);
+        } catch (EWSThrottlingException e) {
+            // default throttling delay is one minute
+            throttlingDelay = 60000;
+            if (ewsMethod.errorValue != null) {
+                // server provided a throttling delay, add 10 seconds
+                try {
+                    throttlingDelay = Long.parseLong(ewsMethod.errorValue) + 10000;
+                } catch (NumberFormatException e2) {
+                    LOGGER.error("Unable to parse BackOffMilliseconds " + e2.getMessage());
+                }
+            }
+            throttlingTimestamp = System.currentTimeMillis() + throttlingDelay;
+
+            LOGGER.warn("Throttling active on server, waiting " + (throttlingDelay / 1000) + " seconds");
+            try {
+                Thread.sleep(throttlingDelay);
+            } catch (InterruptedException e1) {
+                LOGGER.error("Throttling delay interrupted " + e1.getMessage());
+            }
+            // retry once
+            internalExecuteMethod(ewsMethod);
+        }
+        return ewsMethod.getStatusCode();
+    }
+
+    protected void internalExecuteMethod(EWSMethod ewsMethod) throws IOException {
         try {
             ewsMethod.setServerVersion(serverVersion);
             httpClient.executeMethod(ewsMethod);
@@ -2461,7 +2489,9 @@ public class EwsExchangeSession extends ExchangeSession {
         contact.setName(response.get("Name"));
         contact.put("imapUid", response.get("Name"));
         contact.put("uid", response.get("Name"));
-        contact.put("alias", response.get("Surname") + response.get("GivenName").substring(0,1));
+        if (response.get("Surname") != null && response.get("GivenName") != null) {
+        	contact.put("alias", response.get("Surname") + response.get("GivenName").substring(0,1));
+        }
         if (LOGGER.isDebugEnabled()) {
             for (Map.Entry<String, String> entry : response.entrySet()) {
                 String key = entry.getKey();
@@ -2636,6 +2666,7 @@ public class EwsExchangeSession extends ExchangeSession {
     /**
      * Check if itemName is long and base64 encoded.
      * User generated item names are usually short
+     *
      * @param itemName item name
      * @return true if itemName is an EWS item id
      */
